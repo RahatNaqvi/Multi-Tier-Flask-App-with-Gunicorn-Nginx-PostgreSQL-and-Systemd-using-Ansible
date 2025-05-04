@@ -1,0 +1,86 @@
+---
+- name: Multi-tier Flask App Deployment
+  hosts: web
+  become: yes
+
+  tasks:
+    - name: Update APT
+      apt:
+        update_cache: yes
+
+    - name: Install dependencies
+      apt:
+        name:
+          - python3-pip
+          - python3-venv
+          - nginx
+          - postgresql
+          - libpq-dev
+        state: present
+
+    - name: Copy application files
+      copy:
+        src: ../app/
+        dest: /home/ubuntu/multi-tier-flask-app/app/
+        mode: 0755
+
+    - name: Create Python virtual environment
+      ansible.builtin.command:
+        cmd: python3 -m venv /home/ubuntu/multi-tier-flask-app/venv
+      args:
+        creates: /home/ubuntu/multi-tier-flask-app/venv
+
+    - name: Install Python dependencies in venv
+      ansible.builtin.command:
+        cmd: /home/ubuntu/multi-tier-flask-app/venv/bin/pip install -r /home/ubuntu/multi-tier-flask-app/app/requirements.txt
+
+
+    - name: Setup PostgreSQL user and DB
+      become_user: postgres
+      postgresql_db:
+        name: flaskdb
+      register: db
+
+    - name: Create PostgreSQL user
+      become_user: postgres
+      postgresql_user:
+        name: flaskuser
+        password: flaskpass
+        db: flaskdb
+        priv: "ALL"
+
+    - name: Copy systemd service file
+      copy:
+        src: ../systemd/flaskapp.service
+        dest: /etc/systemd/system/flaskapp.service
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable Flask app service
+      systemd:
+        name: flaskapp
+        enabled: yes
+        state: started
+
+    - name: Copy Nginx config
+      copy:
+        src: ../nginx/flaskapp.conf
+        dest: /etc/nginx/sites-available/flaskapp
+
+    - name: Enable Nginx config
+      file:
+        src: /etc/nginx/sites-available/flaskapp
+        dest: /etc/nginx/sites-enabled/flaskapp
+        state: link
+
+    - name: Remove default Nginx config
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
